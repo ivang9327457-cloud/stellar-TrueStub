@@ -89,16 +89,21 @@ export interface RefundExecutor {
   execute(claim: ClaimedRefund): Promise<{ txHash: string }>;
 }
 
-/** Executes refunds by resolving the escrow dispute through Trustless Work. */
+/** Executes refunds by resolving the escrow dispute through Trustless Work with multi-asset support. */
 export class TrustlessWorkRefundExecutor implements RefundExecutor {
   constructor(private readonly client: TrustlessWorkClient = trustlessWorkClient) {}
 
   async execute(claim: ClaimedRefund): Promise<{ txHash: string }> {
+    // 1. Fetch escrow details to retrieve the original funding asset (e.g. EURC/USDC)
+    const escrowDetails = await this.client.getEscrow({ contractId: claim.escrowId });
+    
+    // 2. Resolve dispute passing the correct asset explicitly
     const { txHash } = await this.client.resolveDispute({
       contractId: claim.escrowId,
       escrowType: claim.escrowType ?? "single-release",
       milestoneIndex: claim.milestoneIndex,
       distributions: [{ address: claim.refundTo!, amount: Number(claim.amount) }],
+      asset: escrowDetails?.asset,
     });
     return { txHash };
   }

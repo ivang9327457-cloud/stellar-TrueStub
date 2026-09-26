@@ -1,5 +1,5 @@
 /**
- * Jest tests for RefundService idempotency guard — issue #153
+ * Jest tests for RefundService idempotency guard — issue #153 & #322
  */
 
 import {
@@ -140,6 +140,55 @@ describe("RefundService — idempotency guard (#153)", () => {
     it("removes nothing when the store is empty", async () => {
       const { service } = makeService();
       expect(await service.cleanup(90)).toBe(0);
+    });
+  });
+
+  describe("Multi-asset refund correctness (#322)", () => {
+    it("ensures refunds on non-default asset escrows correctly pass the escrow asset (e.g., EURC)", async () => {
+      const mockClient = {
+        getEscrow: jest.fn().mockResolvedValue({
+          contractId: "escrow-eurc-123",
+          asset: { code: "EURC", issuer: "GA2HGBJIQAHO6LEJKILQ5543MABEEV5YQ2W7C57E8Y25NQKONZHPZ752" },
+        }),
+        resolveDispute: jest.fn().mockResolvedValue({ txHash: "mock_tx_hash_eurc" }),
+      };
+
+      const mockExecutor = {
+        execute: async (claim: any) => {
+          const escrowDetails = await mockClient.getEscrow({ contractId: claim.escrowId });
+          const res = await mockClient.resolveDispute({
+            contractId: claim.escrowId,
+            escrowType: claim.escrowType,
+            milestoneIndex: claim.milestoneIndex,
+            distributions: [{ address: claim.refundTo, amount: Number(claim.amount) }],
+            asset: escrowDetails?.asset,
+          });
+          return res;
+        }
+      };
+
+      const store = new InMemoryRefundStore();
+      const service = new RefundService(store, mockExecutor as any);
+
+      const payload = {
+        refundId: "refund-eurc-1",
+        escrowId: "escrow-eurc-123",
+        amount: "50",
+        currency: "EURC",
+        refundTo: "GBX7QZ4Z3Z3Z3Z3Z3Z3Z3Z3Z3Z3Z3Z3Z3Z3Z3Z3Z3Z3Z3Z3Z3Z3Z3Z3Z",
+        claimedBy: "user-eurc",
+      };
+
+      const result = await service.claimRefund(payload);
+
+      expect(result.status).toBe("submitted");
+      expect(result.txHash).toBe("mock_tx_hash_eurc");
+      expect(mockClient.getEscrow).toHaveBeenCalledWith({ contractId: "escrow-eurc-123" });
+      expect(mockClient.resolveDispute).toHaveBeenCalledWith(
+        expect.objectContaining({
+          asset: expect.objectContaining({ code: "EURC" }),
+        })
+      );
     });
   });
 });

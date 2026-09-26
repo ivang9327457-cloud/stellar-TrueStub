@@ -25,12 +25,25 @@ export interface Distribution {
   amount: number;
 }
 
+export interface Asset {
+  code: string;
+  issuer: string;
+}
+
+export interface EscrowDetails {
+  contractId: string;
+  asset?: Asset;
+  [key: string]: unknown;
+}
+
 export interface ResolveDisputeInput {
   contractId: string;
   escrowType: EscrowType;
   distributions: Distribution[];
   /** Required for multi-release escrows. */
   milestoneIndex?: string;
+  /** Original funding asset resolved dynamically for multi-asset escrows (#322). */
+  asset?: Asset;
 }
 
 export interface SubmittedTransaction {
@@ -40,6 +53,8 @@ export interface SubmittedTransaction {
 }
 
 export interface TrustlessWorkClient {
+  /** Retrieves escrow details including the underlying asset. */
+  getEscrow(input: { contractId: string }): Promise<EscrowDetails>;
   /** Resolves a dispute on-chain, moving escrowed funds per `distributions`. */
   resolveDispute(input: ResolveDisputeInput): Promise<SubmittedTransaction>;
 }
@@ -102,15 +117,31 @@ export function createTrustlessWorkClient(): TrustlessWorkClient {
   }
 
   return {
-    async resolveDispute({ contractId, escrowType, distributions, milestoneIndex }) {
+    async getEscrow({ contractId }: { contractId: string }): Promise<EscrowDetails> {
+      const { apiUrl, apiKey } = requireTrustlessWorkConfig();
+      const response = await fetch(`${apiUrl}/escrow/${contractId}`, {
+        method: "GET",
+        headers: { "x-api-key": apiKey },
+      });
+      const json = (await response.json().catch(() => ({}))) as { message?: string } & EscrowDetails;
+      if (!response.ok) {
+        throw new TrustlessWorkError(
+          `Trustless Work getEscrow failed: ${json.message ?? response.statusText}`,
+          response.status,
+        );
+      }
+      return json;
+    },
+    async resolveDispute({ contractId, escrowType, distributions, milestoneIndex, asset }) {
       const { apiUrl, apiKey, signer, networkPassphrase } = requireTrustlessWorkConfig();
 
       const endpoint = escrowType === "single-release" ? "resolve-dispute" : "resolve-milestone-dispute";
-      const payload = {
+      const payload: Record<string, unknown> = {
         contractId,
         disputeResolver: signer.publicKey(),
         distributions,
         ...(escrowType === "multi-release" ? { milestoneIndex } : {}),
+        ...(asset ? { asset } : {}),
       };
 
       const { unsignedTransaction } = await post<{ unsignedTransaction?: string }>(
