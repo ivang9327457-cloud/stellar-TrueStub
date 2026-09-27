@@ -1,4 +1,3 @@
-#!/usr/bin/env sh
 # .husky/pre-commit — scan staged files for secrets before every commit.
 # Requires gitleaks to be installed locally. If it isn't, a warning is printed
 # and the commit is allowed through (so the hook is non-blocking for contributors
